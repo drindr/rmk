@@ -1,7 +1,5 @@
 //! The rotary encoder implementation is adapted from: https://github.com/leshow/rotary-encoder-hal/blob/master/src/lib.rs
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Receiver, Sender};
 use embedded_hal::digital::InputPin;
 #[cfg(feature = "async_matrix")]
 use embedded_hal_async::digital::Wait;
@@ -12,7 +10,7 @@ use crate::event::{Event, RotaryEncoderEvent};
 use crate::keyboard::{KeyboardReportMessage, EVENT_CHANNEL, KEYBOARD_REPORT_CHANNEL};
 use crate::REPORT_CHANNEL_SIZE;
 
-use super::{InputDevice, InputProcessor, EVENT_CHANNEL_SIZE};
+use super::{DeviceReceiver, DeviceSender, InputDevice, InputProcessor, EVENT_CHANNEL_SIZE};
 
 /// Holds current/old state and both [`InputPin`](https://docs.rs/embedded-hal/latest/embedded_hal/digital/trait.InputPin.html)
 #[derive(Clone, Debug)]
@@ -136,14 +134,16 @@ impl<A: InputPin, B: InputPin, P: Phase> RotaryEncoder<A, B, P> {
 }
 
 impl<
+        'a,
         #[cfg(feature = "async_matrix")] A: InputPin + Wait,
         #[cfg(not(feature = "async_matrix"))] A: InputPin,
         #[cfg(feature = "async_matrix")] B: InputPin + Wait,
         #[cfg(not(feature = "async_matrix"))] B: InputPin,
         P: Phase,
-    > InputDevice for RotaryEncoder<A, B, P>
+    > InputDevice<'a> for RotaryEncoder<A, B, P>
 {
     type EventType = Event;
+    type SenderType = DeviceSender<'a, Self::EventType, EVENT_CHANNEL_SIZE>;
 
     async fn run(&mut self) {
         loop {
@@ -172,17 +172,18 @@ impl<
         }
     }
 
-    fn event_sender(&self) -> Sender<CriticalSectionRawMutex, Self::EventType, EVENT_CHANNEL_SIZE> {
+    fn event_sender(&self) -> Self::SenderType {
         EVENT_CHANNEL.sender()
     }
 }
 
 pub struct RotaryEncoderProcessor {}
 
-impl InputProcessor for RotaryEncoderProcessor {
+impl<'a, 'b> InputProcessor<'a, 'b> for RotaryEncoderProcessor {
     type EventType = Event;
-
     type ReportType = KeyboardReportMessage;
+    type SenderType = DeviceSender<'a, Self::ReportType, REPORT_CHANNEL_SIZE>;
+    type ReceiverType = DeviceReceiver<'b, Self::EventType, EVENT_CHANNEL_SIZE>;
 
     async fn process(&mut self, event: Self::EventType) {
         match event {
@@ -199,15 +200,11 @@ impl InputProcessor for RotaryEncoderProcessor {
         }
     }
 
-    fn event_receiver(
-        &self,
-    ) -> Receiver<CriticalSectionRawMutex, Self::EventType, EVENT_CHANNEL_SIZE> {
+    fn event_receiver(&self) -> Self::ReceiverType {
         EVENT_CHANNEL.receiver()
     }
 
-    fn report_sender(
-        &self,
-    ) -> Sender<CriticalSectionRawMutex, Self::ReportType, REPORT_CHANNEL_SIZE> {
+    fn report_sender(&self) -> Self::SenderType {
         KEYBOARD_REPORT_CHANNEL.sender()
     }
 }
